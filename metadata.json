@@ -1,0 +1,8 @@
+{
+  "name": "Remix ReviewMyStore.AI",
+  "description": "AI Google Review generator \u0026 smart review management platform with Places API sync, customizable keyword prompts, 6x4 printable QR stands, and context-aware AI auto-replies.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
