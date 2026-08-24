@@ -141,12 +141,15 @@ CREATE POLICY "Owners can manage store keywords" ON public.store_keywords
     )
   );
 
--- Reviews: Anyone can submit a review via the public QR portal
-CREATE POLICY "Public can insert reviews" ON public.reviews
-  FOR INSERT WITH CHECK (true);
-
-CREATE POLICY "Public can view reviews" ON public.reviews
-  FOR SELECT USING (true);
+-- Reviews contain customer PII. They are visible only to the store owner.
+DROP POLICY IF EXISTS "Public can insert reviews" ON public.reviews;
+DROP POLICY IF EXISTS "Public can view reviews" ON public.reviews;
+CREATE POLICY "Store owners can view reviews" ON public.reviews
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM public.stores WHERE stores.id = reviews.store_id AND stores.owner_id = auth.uid()
+    )
+  );
 
 CREATE POLICY "Store owners can update reviews (AI replies)" ON public.reviews
   FOR UPDATE USING (
@@ -155,9 +158,9 @@ CREATE POLICY "Store owners can update reviews (AI replies)" ON public.reviews
     )
   );
 
--- Private Feedback: Public can insert shield feedback, only store owners can read
-CREATE POLICY "Public can insert private feedback" ON public.private_feedbacks
-  FOR INSERT WITH CHECK (true);
+-- Private feedback is inserted only by the validated server endpoint using the
+-- service-role key; clients never receive a direct anonymous insert policy.
+DROP POLICY IF EXISTS "Public can insert private feedback" ON public.private_feedbacks;
 
 CREATE POLICY "Store owners can view and manage private feedback" ON public.private_feedbacks
   FOR ALL USING (
