@@ -146,7 +146,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, pendingSt
             </div>
             <div className="flex items-center gap-2">
               <Sparkles className="w-3.5 h-3.5 text-blue-400" />
-              <span>Auto-sync your Google Business Profile & Reviews</span>
+              <span>Secure access to manage your ReviewMyStore workspace</span>
             </div>
           </div>
         </div>
