@@ -303,7 +303,7 @@ export const StoreProfile: React.FC<StoreProfileProps> = ({
                 Integration Status
               </span>
               <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-600 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-800">
-                <CheckCircle2 className="w-3 h-3" /> GMB Live
+                <CheckCircle2 className="w-3 h-3" /> Manual setup required
               </span>
             </div>
 
@@ -315,7 +315,7 @@ export const StoreProfile: React.FC<StoreProfileProps> = ({
                 </span>
               </div>
               <p className="text-[11px] text-slate-600 dark:text-slate-400">
-                Connected with Google Business Profile to publish owner replies and fetch incoming reviews automatically.
+                Google Business Profile syncing is not configured. Store details and reply drafts can still be managed here.
               </p>
               <button
                 type="button"
