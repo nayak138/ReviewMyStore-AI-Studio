@@ -102,8 +102,8 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
         body: JSON.stringify({
           storeName: store.name,
           category: store.category,
-          starRating: 5,
-          keywords: selectedKws,
+          rating: 5,
+          selectedKeywords: selectedKws,
           tone: 'Warm & Detailed',
           customerName: testCustomerName,
         }),
