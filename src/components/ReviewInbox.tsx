@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Store, ReviewItem } from '../types';
+import { authenticatedJsonHeaders } from '../lib/api';
 import {
   Inbox,
   Sparkles,
@@ -82,8 +83,9 @@ export const ReviewInbox: React.FC<ReviewInboxProps> = ({
     try {
       const response = await fetch('/api/ai/generate-reply', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await authenticatedJsonHeaders(),
         body: JSON.stringify({
+          storeId: store.id,
           storeName: store.name,
           customerName: review.customerName,
           reviewText: review.reviewText,
@@ -110,15 +112,16 @@ export const ReviewInbox: React.FC<ReviewInboxProps> = ({
     }
   };
 
-  // Publish reply
+  // Google Business Profile publishing is not connected yet. Keep the draft honest
+  // and put it on the clipboard for the owner to publish manually.
   const handlePublishReply = (reviewId: string) => {
+    navigator.clipboard.writeText(draftText).catch(() => undefined);
     const updated = reviews.map((r) =>
       r.id === reviewId
         ? {
             ...r,
             aiReply: draftText,
-            replyStatus: 'published' as const,
-            publishedAt: 'Just now',
+            replyStatus: 'drafted' as const,
           }
         : r
     );
@@ -557,9 +560,7 @@ export const ReviewInbox: React.FC<ReviewInboxProps> = ({
                     id="publish-google-reply-btn"
                   >
                     <Send className="w-3.5 h-3.5" />
-                    {selectedReview.replyStatus === 'published'
-                      ? 'Update Published Reply'
-                      : 'Publish Reply to Google'}
+                    Copy Draft for Google
                   </button>
                 </div>
               </div>
@@ -568,7 +569,7 @@ export const ReviewInbox: React.FC<ReviewInboxProps> = ({
               <div className="p-3 rounded-xl bg-blue-50/60 dark:bg-slate-800 text-[11px] text-slate-600 dark:text-slate-400 border border-blue-100 dark:border-slate-700 flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-blue-500"></span>
                 <span>
-                  Responses sync in real-time via Bundle Social & Google My Business APIs to appear publicly on your Maps listing.
+                  Copy this draft, then publish it manually in your Google Business Profile. Automatic Google publishing is not configured.
                 </span>
               </div>
             </div>

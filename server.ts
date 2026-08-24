@@ -2,6 +2,7 @@ import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
+import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -9,7 +10,63 @@ dotenv.config();
 const app = express();
 const PORT = 3000;
 
-app.use(express.json());
+app.use(express.json({ limit: "20kb" }));
+
+const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
+const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const rateLimits = new Map<string, { count: number; resetAt: number }>();
+
+function allowRequest(req: express.Request, bucket: string, limit: number, windowMs: number) {
+  const key = `${bucket}:${req.ip}`;
+  const now = Date.now();
+  const current = rateLimits.get(key);
+  if (!current || current.resetAt <= now) {
+    rateLimits.set(key, { count: 1, resetAt: now + windowMs });
+    return true;
+  }
+  if (current.count >= limit) return false;
+  current.count += 1;
+  return true;
+}
+
+async function requireUser(req: express.Request, res: express.Response) {
+  const token = req.header("authorization")?.replace(/^Bearer\s+/i, "");
+  if (!token || !supabaseUrl || !supabaseAnonKey) {
+    res.status(401).json({ error: "Authentication is required." });
+    return null;
+  }
+
+  const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+    global: { headers: { Authorization: `Bearer ${token}` } },
+  });
+  const { data, error } = await supabase.auth.getUser(token);
+  if (error || !data.user) {
+    res.status(401).json({ error: "Invalid or expired session." });
+    return null;
+  }
+  return { user: data.user, supabase };
+}
+
+async function requireStoreOwner(req: express.Request, res: express.Response, storeId: unknown) {
+  const auth = await requireUser(req, res);
+  if (!auth) return null;
+  if (typeof storeId !== "string" || !storeId) {
+    res.status(400).json({ error: "storeId is required." });
+    return null;
+  }
+  const { data, error } = await auth.supabase
+    .from("stores")
+    .select("id")
+    .eq("id", storeId)
+    .eq("owner_id", auth.user.id)
+    .maybeSingle();
+  if (error || !data) {
+    res.status(403).json({ error: "You do not own this store." });
+    return null;
+  }
+  return auth;
+}
 
 // Initialize Gemini SDK with telemetry header
 const apiKey = process.env.GEMINI_API_KEY;
@@ -257,7 +314,7 @@ async function fetchGooglePlacesLive(rawQuery: string, apiKey: string) {
 
           let photoUrl = getIndustryFallbackPhoto(industry);
           if (p.photos && p.photos.length > 0 && p.photos[0].name) {
-            photoUrl = `https://places.googleapis.com/v1/${p.photos[0].name}/media?maxHeightPx=800&maxWidthPx=800&key=${apiKey}`;
+            photoUrl = `/api/places/photo?name=${encodeURIComponent(p.photos[0].name)}`;
           }
 
           return {
@@ -293,7 +350,7 @@ async function fetchGooglePlacesLive(rawQuery: string, apiKey: string) {
           const category = humanizeCategory(p.types?.[0] || "", industry);
           let photoUrl = getIndustryFallbackPhoto(industry);
           if (p.photos && p.photos.length > 0 && p.photos[0].photo_reference) {
-            photoUrl = `https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photoreference=${p.photos[0].photo_reference}&key=${apiKey}`;
+            photoUrl = `/api/places/photo?legacyRef=${encodeURIComponent(p.photos[0].photo_reference)}`;
           }
 
           return {
@@ -321,9 +378,38 @@ async function fetchGooglePlacesLive(rawQuery: string, apiKey: string) {
   return null;
 }
 
+// Keep Google API keys server-side when rendering Places photos.
+app.get("/api/places/photo", async (req, res) => {
+  if (!allowRequest(req, "places-photo", 60, 60_000)) {
+    return res.status(429).json({ error: "Too many requests." });
+  }
+  const apiKey = process.env.MAPS_PLATFORM_API_KEY || process.env.GOOGLE_MAPS_API_KEY || process.env.GOOGLE_PLACES_API_KEY;
+  const name = typeof req.query.name === "string" ? req.query.name : "";
+  const legacyRef = typeof req.query.legacyRef === "string" ? req.query.legacyRef : "";
+  if (!apiKey || (!/^places\/[^/]+\/photos\/[^/]+$/.test(name) && !/^[A-Za-z0-9_-]{10,}$/.test(legacyRef))) {
+    return res.status(400).json({ error: "Invalid photo request." });
+  }
+  const url = name
+    ? `https://places.googleapis.com/v1/${name}/media?maxHeightPx=800&maxWidthPx=800`
+    : `https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photoreference=${encodeURIComponent(legacyRef)}`;
+  try {
+    const upstream = await fetch(url, { headers: { "X-Goog-Api-Key": apiKey } });
+    if (!upstream.ok) return res.status(upstream.status).end();
+    const contentType = upstream.headers.get("content-type");
+    if (contentType) res.setHeader("content-type", contentType);
+    res.setHeader("cache-control", "public, max-age=3600");
+    res.send(Buffer.from(await upstream.arrayBuffer()));
+  } catch {
+    res.status(502).json({ error: "Unable to fetch the Places photo." });
+  }
+});
+
 // Search Places API supporting live Google Places API with robust fallback
 app.post("/api/places/search", async (req, res) => {
-  const rawQuery = (req.body.query || "").trim();
+  if (!allowRequest(req, "places-search", 20, 60_000)) {
+    return res.status(429).json({ error: "Too many searches. Please try again shortly." });
+  }
+  const rawQuery = typeof req.body.query === "string" ? req.body.query.trim().slice(0, 160) : "";
   const query = rawQuery.toLowerCase();
 
   const googleApiKey =
@@ -424,6 +510,15 @@ app.post("/api/social/publish-review", async (req, res) => {
     caption,
   } = req.body;
 
+  const auth = await requireStoreOwner(req, res, req.body.storeId);
+  if (!auth) return;
+  if (!allowRequest(req, `social-publish:${auth.user.id}`, 10, 60 * 60_000)) {
+    return res.status(429).json({ error: "Publishing limit reached. Please try again later." });
+  }
+  if (typeof reviewText !== "string" || reviewText.trim().length === 0 || reviewText.length > 2_000 || !Array.isArray(channels)) {
+    return res.status(400).json({ error: "A valid review and channel list are required." });
+  }
+
   const bundleKey = getBundleSocialKey();
 
   const defaultCaption =
@@ -467,14 +562,11 @@ app.post("/api/social/publish-review", async (req, res) => {
     }
   }
 
-  // Graceful fallback / simulated broadcast confirmation with preview
-  return res.json({
-    success: true,
-    livePublished: Boolean(bundleKey),
-    postId: "bndl_sim_" + Date.now(),
-    channels: channels,
-    message: `Review broadcast across ${channels.join(", ")} via Bundle Social!`,
-    caption: defaultCaption,
+  return res.status(503).json({
+    success: false,
+    error: bundleKey
+      ? "The social provider did not confirm publication. Nothing was posted."
+      : "Social publishing is not configured.",
   });
 });
 
@@ -495,6 +587,9 @@ app.get("/api/supabase/status", (req, res) => {
 // AI Review Generator endpoint for customers
 app.post("/api/ai/generate-review", async (req, res) => {
   try {
+    if (!allowRequest(req, "public-review-generation", 10, 60 * 60_000)) {
+      return res.status(429).json({ error: "Generation limit reached. Please try again later." });
+    }
     const {
       storeName,
       category,
@@ -506,7 +601,13 @@ app.post("/api/ai/generate-review", async (req, res) => {
       additionalDetails = "",
     } = req.body;
 
-    const allKeywords = [...selectedKeywords, ...customKeywords];
+    if (!Array.isArray(selectedKeywords) || !Array.isArray(customKeywords) || typeof storeName !== "string" || storeName.length > 160) {
+      return res.status(400).json({ error: "Invalid review request." });
+    }
+    const allKeywords = [...selectedKeywords, ...customKeywords]
+      .filter((keyword): keyword is string => typeof keyword === "string")
+      .map((keyword) => keyword.slice(0, 80))
+      .slice(0, 12);
 
     if (!ai) {
       // High-quality deterministic fallback if API key is not yet configured
@@ -569,12 +670,28 @@ Writing Guidelines:
 // Private feedback submission endpoint
 app.post("/api/feedback/private", async (req, res) => {
   const { storeId, storeName, rating, message, customerContact } = req.body;
-  console.log(`[Private Shield] New private feedback for ${storeName} (${storeId}): rating=${rating}, contact=${customerContact}`);
-  res.json({
-    success: true,
-    feedbackId: "fb_" + Math.random().toString(36).substring(2, 10),
-    timestamp: new Date().toISOString(),
-  });
+  if (!allowRequest(req, "private-feedback", 5, 60 * 60_000)) {
+    return res.status(429).json({ error: "Too many submissions. Please try again later." });
+  }
+  if (!supabaseUrl || !supabaseServiceRoleKey || typeof storeId !== "string" || typeof message !== "string" ||
+      message.trim().length === 0 || message.length > 2_000 || !Number.isInteger(rating) || rating < 1 || rating > 5) {
+    return res.status(400).json({ error: "Invalid feedback submission." });
+  }
+  const contact = typeof customerContact === "string" ? customerContact.trim().slice(0, 255) : "";
+  const supabase = createClient(supabaseUrl, supabaseServiceRoleKey);
+  const { data, error } = await supabase.from("private_feedbacks").insert({
+    store_id: storeId,
+    customer_name: "Anonymous customer",
+    customer_email: contact.includes("@") ? contact : null,
+    customer_phone: contact && !contact.includes("@") ? contact : null,
+    rating,
+    feedback_text: message.trim(),
+  }).select("id, created_at").single();
+  if (error) {
+    console.error("Private feedback persistence failed:", error.message);
+    return res.status(503).json({ error: "We could not save your feedback. Please try again." });
+  }
+  return res.status(201).json({ success: true, feedbackId: data.id, timestamp: data.created_at });
 });
 
 // AI Reply Generator for store owners
@@ -590,7 +707,13 @@ app.post("/api/ai/generate-reply", async (req, res) => {
       ownerName = "The Team",
     } = req.body;
 
-    if (!reviewText) {
+    const auth = await requireStoreOwner(req, res, req.body.storeId);
+    if (!auth) return;
+    if (!allowRequest(req, `owner-reply:${auth.user.id}`, 30, 60 * 60_000)) {
+      return res.status(429).json({ error: "Generation limit reached. Please try again later." });
+    }
+
+    if (typeof reviewText !== "string" || !reviewText.trim() || reviewText.length > 4_000) {
       return res.status(400).json({ error: "reviewText is required" });
     }
 

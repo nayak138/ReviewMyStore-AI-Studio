@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Store, ReviewItem } from '../types';
+import { authenticatedJsonHeaders } from '../lib/api';
 import {
   TrendingUp,
   Award,
@@ -93,8 +94,9 @@ export const DashboardAnalytics: React.FC<DashboardAnalyticsProps> = ({
     try {
       const res = await fetch('/api/social/publish-review', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await authenticatedJsonHeaders(),
         body: JSON.stringify({
+          storeId: store.id,
           storeName: store.name,
           customerName: selectedSocialReview.customerName,
           rating: selectedSocialReview.rating,
