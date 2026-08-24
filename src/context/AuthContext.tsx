@@ -44,6 +44,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     let mounted = true;
+    let unsubscribe: (() => void) | undefined;
 
     async function initAuth() {
       try {
@@ -74,9 +75,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
           });
 
-          return () => {
-            authListener?.subscription?.unsubscribe();
-          };
+          unsubscribe = () => authListener?.subscription?.unsubscribe();
         }
       } catch (err) {
         console.warn('Auth init check:', err);
@@ -91,6 +90,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     return () => {
       mounted = false;
+      unsubscribe?.();
     };
   }, []);
 
