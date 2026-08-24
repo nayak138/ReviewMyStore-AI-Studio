@@ -203,7 +203,7 @@ export const CustomerReviewPortal: React.FC<CustomerReviewPortalProps> = ({
     if (!privateMessage.trim()) return;
     setIsSendingFeedback(true);
     try {
-      await fetch('/api/feedback/private', {
+      const response = await fetch('/api/feedback/private', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -214,11 +214,11 @@ export const CustomerReviewPortal: React.FC<CustomerReviewPortalProps> = ({
           customerContact: privateContact,
         })
       });
+      if (!response.ok) throw new Error('Feedback could not be saved.');
       setPrivateFeedbackSent(true);
       setTimeout(() => setShowPrivateShieldModal(false), 2500);
     } catch (e) {
-      setPrivateFeedbackSent(true);
-      setTimeout(() => setShowPrivateShieldModal(false), 2500);
+      console.error('Private feedback submission failed', e);
     } finally {
       setIsSendingFeedback(false);
     }
